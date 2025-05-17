@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Interactive Parcel Analysis</title>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <!-- Leaflet CSS -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.7.1/dist/leaflet.css" />
+    <!-- Leaflet Draw CSS -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.css" />
+    <style>
+        body { font-family: Arial, sans-serif; margin: 0; padding: 0; background-color: #f4f4f4; color: #333; }
+        .container {
+            display: flex;
+            flex-direction: column;
+            height: 100vh; /* Make container fill viewport height */
+            padding: 20px;
+            box-sizing: border-box; /* Include padding in height/width calculations */
+        }
+        h1 { 
+            color: #333; 
+            text-align: center; 
+            flex-shrink: 0; /* Prevent h1 from shrinking */
+            margin-bottom: 15px; /* Add some space below h1 */
+        }
+        #map_container { 
+            height: 60vh; /* Explicit height for the map */
+            /* Or using flex-basis: flex-basis: 60%; flex-shrink: 0; */
+            width: 100%; 
+            margin-bottom: 20px; 
+            border: 1px solid #ccc; 
+            overflow: hidden; /* Crucial: Prevent map internals from overflowing */
+            flex-shrink: 0; /* Prevent map container from shrinking if results content is large */
+        }
+        .results { 
+            flex-grow: 1; /* Allow results to take remaining vertical space */
+            overflow-y: auto; /* Add scrollbar if content overflows */
+            background-color: #fff; 
+            padding: 15px; 
+            border-radius: 5px; 
+            box-shadow: 0 0 10px rgba(0,0,0,0.1); 
+        }
+        #loading { display: none; text-align: center; margin-top: 10px; }
+        #downloadCsvButton { 
+            display: none; /* Hidden by default */
+            margin-top: 10px; 
+            padding: 10px 15px; 
+            background-color: #28a745; 
+            color: white; 
+            border: none; 
+            border-radius: 4px; 
+            cursor: pointer; 
+            text-decoration: none; /* If using <a> tag */
+        }
+        #downloadCsvButton:hover { background-color: #218838; }
+        .error-message { color: red; font-weight: bold; }
+        .info-message { color: blue; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Draw a Boundary to Analyze Parcels</h1>
+        
+        <div id="map_container">
+            {{ map_html|safe }}
+        </div>
+
+        <div class="results">
+            <h2>Analysis Results</h2>
+            <div id="analysisResult">
+                <p>Draw a polygon or rectangle on the map to see results.</p>
+            </div>
+            <div id="loading">Processing...</div>
+            <a id="downloadCsvButton" href="/download_csv">Download Parcel Details (CSV)</a>
+        </div>
+    </div>
+
+    <!-- Leaflet JS -->
+    <script src="https://unpkg.com/leaflet@1.7.1/dist/leaflet.js"></script>
+    <!-- Leaflet Draw JS -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.js"></script>
+
+    <script>
+        // The map object is already initialized by Folium and embedded in map_html.
+        // We need to find the map instance that Folium creates to attach draw events.
+        // Folium typically names its map objects `map_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx`.
+        // A more robust way is to ensure your Flask-generated map has a known ID or to find it.
+        
+        // Wait for the DOM to be fully loaded
+        document.addEventListener('DOMContentLoaded', function () {
+            // Remove the old map instance finding logic as it won't work with iframes.
+            // var mapInstance;
+            // Try to find the map instance created by Folium
+            // This assumes the map container in Folium's output has an ID starting with 'map_'
+            // This is a common pattern but might need adjustment if Folium changes its output structure.
+            // var mapDiv = document.querySelector('#map_container > div[id^="map_"]');
+            // if (mapDiv && mapDiv._leaflet_map) {
+            //     mapInstance = mapDiv._leaflet_map;
+            // } else {
+            //     console.error("Leaflet map instance not found. Draw events might not work.");
+            //     // As a fallback, try to access the global L.map instances if any.
+            //     // This is less reliable.
+            //     if (typeof L !== 'undefined' && L.DomUtil.getMap) {
+            //         var potentialMaps = document.querySelectorAll('.leaflet-container');
+            //         potentialMaps.forEach(function(pm) {
+            //             if (L.DomUtil.getMap(pm)) {
+            //                 mapInstance = L.DomUtil.getMap(pm);
+            //             }
+            //         });
+            //     }
+            //     if (!mapInstance) {
+            //          console.error("Could not find Leaflet map instance. User drawing will not be processed.");
+            //          document.getElementById('analysisResult').innerHTML = '<p class="error-message">Error: Map interaction features could not be initialized. Please refresh.</p>';
+            //          return;
+            //     }
+            // }
+
+            // Listen for messages from the iframe
+            window.addEventListener('message', function(event) {
+                if (event.data && event.data.type === 'foliumDrawData') {
+                    var geoJsonData = event.data.data;
+                    console.log('Parent page received geoJsonData from iframe:', geoJsonData);
+
+                    // Show loading indicator
+                    document.getElementById('loading').style.display = 'block';
+                    document.getElementById('analysisResult').innerHTML = '';
+                    document.getElementById('downloadCsvButton').style.display = 'none';
+
+                    fetch('/process_boundary', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify(geoJsonData)
+                    })
+                    .then(response => {
+                        if (!response.ok) {
+                            return response.json().then(err => { throw new Error(err.error || 'Network response was not ok.'); });
+                        }
+                        return response.json();
+                    })
+                    .then(data => {
+                        console.log('Response from /process_boundary:', data); // Debugging log
+                        document.getElementById('loading').style.display = 'none';
+                        if (data.error) {
+                            document.getElementById('analysisResult').innerHTML = '<p class="error-message">Error: ' + data.error + '</p>';
+                        } else {
+                            let resultHtml = '<p class="info-message">' + data.message + '</p>';
+                            resultHtml += '<p><strong>Total Assessed Value:</strong> $' + (data.total_assessed_value ? data.total_assessed_value.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2}) : '0.00') + '</p>';
+                            resultHtml += '<p><strong>Number of Parcels:</strong> ' + (data.parcel_count || 0) + '</p>';
+                            document.getElementById('analysisResult').innerHTML = resultHtml;
+                            
+                            if (data.csv_available && data.parcel_count > 0) {
+                                document.getElementById('downloadCsvButton').style.display = 'block';
+                            } else {
+                                document.getElementById('downloadCsvButton').style.display = 'none';
+                            }
+                        }
+                    })
+                    .catch((error) => {
+                        console.error('Error processing boundary:', error); // Debugging log
+                        document.getElementById('loading').style.display = 'none';
+                        document.getElementById('analysisResult').innerHTML = '<p class="error-message">Error processing boundary: ' + error.message + '</p>';
+                    });
+                }
+            });
+
+            // The old mapInstance.on(L.Draw.Event.CREATED, ...) is no longer needed here
+            // as the event is handled inside the iframe and data is sent via postMessage.
+            // Ensure the message area is clear if there were previous errors.
+            // document.getElementById('analysisResult').innerHTML = '<p>Draw a polygon or rectangle on the map to see results.</p>';
+        });
+    </script>
+</body>
+</html>
