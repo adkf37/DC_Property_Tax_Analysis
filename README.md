@@ -80,5 +80,3 @@ Key dependencies include:
 
 ## Data Flow Diagram
 ![Data Flow Diagram](flowchart.png)
-
-*Note: Replace `flowchart.png` with the actual flowchart image file path.*
